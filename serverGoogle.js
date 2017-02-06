@@ -4,9 +4,11 @@ const express = require('express'),
       massive = require('massive'),
       passport = require('passport'),
       LocalStrategy = require('passport-local').Strategy,
-      FacebookStrategy = require('passport-facebook').Strategy,
+      GoogleStrategy = require('passport-google-oauth2').Strategy,
       config = require('./config.js'),
-      cors = require('cors');
+      cors = require('cors'),
+      cookieParser = require('cookie-parser'),
+      jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(bodyParser.json());
@@ -38,18 +40,18 @@ const db = app.get('db');
 
 
 
-passport.use(new FacebookStrategy({
-  clientID: config.facebook.clientID,
-  clientSecret: config.facebook.clientSecret,
-  callbackURL: "http://localhost:3000/auth/facebook/callback",
+passport.use(new GoogleStrategy({
+  clientID: config.google.clientID,
+  clientSecret: config.google.clientSecret,
+  callbackURL: "http://localhost:3000/auth/google/callback",
   profileFields: ['id', 'displayName']
 },
 function(accessToken, refreshToken, profile, cb) {
-  db.getUserByFacebookId([profile.id], function(err, user) {
+  db.getUserBygoogleId([profile.id], function(err, user) {
     user = user[0];
     if (!user) {
       console.log('CREATING USER');
-      db.createUserFacebook([profile.displayName, profile.id], function(err, user) {
+      db.createUserGoogle([profile.displayName, profile.id], function(err, user) {
         console.log('USER CREATED', user);
         return cb(err, user);
       })
@@ -74,10 +76,12 @@ passport.deserializeUser(function(id, done) {
 })
 
 
-app.get('/auth/facebook', passport.authenticate('facebook'))
+app.get('/auth/google', passport.authenticate('google', {session:false}, (req, res) => {
+    const token = jwt.sign()
+}))
 
-app.get('/auth/facebook/callback',
-  passport.authenticate('facebook', {successRedirect: '/' }), function(req, res) {
+app.get('/auth/google/callback',
+  passport.authenticate('google', {successRedirect: '/' }), function(req, res) {
     res.status(200).send(req.user);
   })
 

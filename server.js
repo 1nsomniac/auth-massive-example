@@ -1,20 +1,24 @@
 const express = require('express'),
-      session = require('express-session'),
       bodyParser = require('body-parser'),
       massive = require('massive'),
       passport = require('passport'),
-      LocalStrategy = require('passport-local').Strategy,
-      FacebookStrategy = require('passport-facebook').Strategy,
+      Auth0Strategy = require('passport-auth0'),
       config = require('./config.js'),
-      cors = require('cors');
+      cors = require('cors'),
+      jwt = require('jsonwebtoken'),
+      cookieParser = require('cookie-parser'),
+      session = require('express-session');
 
 const app = express();
 app.use(bodyParser.json());
+app.use(cookieParser());
+
 app.use(session({
-  resave: true,
-  saveUninitialized: true,
-  secret: 'keyboardcat'
+  secret: config.secret,
+  saveUninitialized: false,
+  resave: true
 }))
+
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -25,7 +29,7 @@ app.use(express.static('./public'));
 /////////////
 // DATABASE //
 /////////////
-const massiveInstance = massive.connectSync({connectionString: 'postgres://localhost/sandbox'})
+const massiveInstance = massive.connectSync({connectionString: 'postgres://localhost/Brett'})
 
 app.set('db', massiveInstance);
 const db = app.get('db');
@@ -37,67 +41,56 @@ const db = app.get('db');
 // })
 
 
-passport.use(new LocalStrategy(
-  function(username, password, done) {
-    db.getUserByUsername([username], function(err, user) {
+passport.use(new Auth0Strategy({
+   domain:       config.auth0.domain,
+   clientID:     config.auth0.clientID,
+   clientSecret: config.auth0.clientSecret,
+   callbackURL:  '/auth/callback'
+  },
+  function(accessToken, refreshToken, extraParams, profile, done) {
+    //Find user in database
+    db.getUserByAuthId([profile.id], function(err, user) {
       user = user[0];
-      if (err) { return done(err); }
-      if (!user) { return done(null, false); }
-      if (user.password != password) { return done(null, false); }
-      return done(null, user);
+      if (!user) { //if there isn't one, we'll create one!
+        console.log('CREATING USER');
+        db.createUserByAuth([profile.displayName, profile.id], function(err, user) {
+          console.log('USER CREATED', user);
+          return done(err, user[0]);
+        })
+      } else { //when we find the user, return it
+        console.log('FOUND USER', user);
+        return done(err, user);
+      }
     })
   }
-))
-
-passport.use(new FacebookStrategy({
-  clientID: config.facebook.clientID,
-  clientSecret: config.facebook.clientSecret,
-  callbackURL: "http://localhost:3000/auth/facebook/callback",
-  profileFields: ['id', 'displayName']
-},
-function(accessToken, refreshToken, profile, cb) {
-  db.getUserByFacebookId([profile.id], function(err, user) {
-    user = user[0];
-    if (!user) {
-      console.log('CREATING USER');
-      db.createUserFacebook([profile.displayName, profile.id], function(err, user) {
-        console.log('USER CREATED', user);
-        return cb(err, user);
-      })
-    } else {
-      return cb(err, user);
-    }
-  })
-}));
+));
 
 passport.serializeUser(function(user, done) {
-  done(null, user.userid);
+  console.log('serializing', user);
+  done(null, user);
 })
 
-passport.deserializeUser(function(id, done) {
-  db.getUserById([id], function(err, user) {
-    user = user[0];
-    if (err) console.log(err);
-    else console.log('RETRIEVED USER');
-    console.log(user);
-    done(null, user);
-  })
+passport.deserializeUser(function(user, done) {
+  done(null, user);
 })
 
-app.post('/auth/local', passport.authenticate('local'), function(req, res) {
-  res.status(200).send();
-});
 
-app.get('/auth/facebook', passport.authenticate('facebook'))
 
-app.get('/auth/facebook/callback',
-  passport.authenticate('facebook', {successRedirect: '/' }), function(req, res) {
+app.get('/auth', passport.authenticate('auth0'))
+
+app.get('/auth/callback',
+  passport.authenticate('auth0', {successRedirect: '/'}), function(req, res) {
     res.status(200).send(req.user);
   })
 
 app.get('/auth/me', function(req, res) {
-  if (!req.user) return res.sendStatus(404);
-  res.status(200).send(req.user);
+  if (req.user) {
+    console.log(req.user);
+    res.status(200).send(req.user);
+  } else {
+    console.log('NO user!')
+    res.status(200).send();
+  }
 })
 
 app.get('/auth/logout', function(req, res) {
@@ -108,3 +101,11 @@ app.get('/auth/logout', function(req, res) {
 app.listen(3000, function() {
   console.log('Connected on 3000')
 })
+
+
+app.get('/auth/facebook', passport.authenticate('facebook'))
+
+app.get('/auth/facebook/callback',
+  passport.authenticate('facebook'), function(req, res) {
+    res.status(200).redirect('/#/');
+  })
